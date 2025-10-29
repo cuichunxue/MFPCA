@@ -151,6 +151,11 @@ class TheoreticalMFPCA:
             self.time_grid_ = np.linspace(0, 1, n_timepoints)
         else:
             self.time_grid_ = np.asarray(time_grid)
+            if len(self.time_grid_) != n_timepoints:
+                raise ValueError(
+                    f"time_grid length ({len(self.time_grid_)}) must match "
+                    f"X.shape[1] ({n_timepoints})"
+                )
 
         # Create basis system
         domain = (self.time_grid_[0], self.time_grid_[-1])
@@ -189,9 +194,9 @@ class TheoreticalMFPCA:
             C_centered = self.coefficients_
 
         # Step 3: Compute covariance matrix in basis space
-        # Σ = (1/n) C^T W C where W is block diagonal with Gram matrices
-        W = self._construct_weight_matrix()
-        Sigma = (C_centered.T @ W @ C_centered) / n_samples
+        # Σ = (1/n) C^T C (standard covariance)
+        # W (Gram matrix) will be used later for L2 inner products
+        Sigma = (C_centered.T @ C_centered) / n_samples
 
         # Add regularization for numerical stability
         Sigma += self.regularization * np.eye(Sigma.shape[0])
@@ -208,10 +213,10 @@ class TheoreticalMFPCA:
         self.eigenvalues_ = eigenvalues[:n_comp]
         self.eigenvector_coefficients_ = eigenvectors[:, :n_comp]
 
-        # Step 6: Compute scores via projection
-        # ξ_{ik} = ∫ [X_i(t) - μ(t)]^T φ_k(t) dt
-        #        = c_i^T W v_k (in basis space)
-        self.scores_ = C_centered @ W @ self.eigenvector_coefficients_
+        # Step 6: Compute scores via projection in basis space
+        # ξ_{ik} = c_i^T v_k (in coefficient space)
+        # Note: L2 inner product will be properly accounted for in eigenfunction evaluation
+        self.scores_ = C_centered @ self.eigenvector_coefficients_
 
         # Normalize eigenfunctions to have unit L2 norm
         self._normalize_eigenfunctions()
@@ -248,9 +253,8 @@ class TheoreticalMFPCA:
         else:
             C_centered = C
 
-        # Project onto eigenfunctions
-        W = self._construct_weight_matrix()
-        scores = C_centered @ W @ self.eigenvector_coefficients_
+        # Project onto eigenfunctions in coefficient space
+        scores = C_centered @ self.eigenvector_coefficients_
 
         return scores
 
