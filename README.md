@@ -30,6 +30,15 @@ A professional Python implementation of Multivariate Functional Principal Compon
 - 豊富な可視化ツール
 - クロスバリデーション・ブートストラップ解析
 
+### 📚 理論的厳密性 (Theoretical Rigor)
+**2つの実装を提供：**
+1. **MFPCA**: パフォーマンス最適化された高速実装
+2. **TheoreticalMFPCA**: 関数データ解析の文献に厳密に従った実装
+   - 基底展開法（B-spline, Fourier）
+   - 正確なL2ノルム正規化
+   - 理論的性質の検証可能
+   - Ramsay & Silverman (2005), Happ & Greven (2018) に基づく
+
 ## インストール (Installation)
 
 ```bash
@@ -125,6 +134,63 @@ X_reconstructed = mfpca.inverse_transform(scores)
 
 # 再構成誤差の計算
 rmse = mfpca.get_reconstruction_error(X, n_components=3)
+```
+
+### 1b. 理論的に厳密なMFPCA (TheoreticalMFPCA)
+
+**論文に基づいた基底展開法による実装**
+
+```python
+from mfpca import TheoreticalMFPCA
+
+# 基底展開法によるMFPCA
+mfpca = TheoreticalMFPCA(
+    n_components=5,
+    n_basis=20,                    # 各変数あたりの基底関数数
+    basis_type='bspline',          # 'bspline' or 'fourier'
+    basis_degree=3,                # B-splineの次数
+    smoothing=True,                # スムージングペナルティ
+    smoothing_penalty=0.01,        # ペナルティパラメータ λ
+    penalty_order=2,               # 微分階数（2階微分ペナルティ）
+    center=True
+)
+
+# 学習
+mfpca.fit(X, time_grid)
+
+# 固有関数の評価（任意の時間グリッド上で）
+eigenfunctions = mfpca.get_eigenfunctions(time_grid)  # (n_components, n_timepoints, n_variables)
+
+# 平均関数の評価
+mean_function = mfpca.get_mean_function(time_grid)    # (n_timepoints, n_variables)
+
+# スコア計算
+scores = mfpca.transform(X)
+
+# データ再構成（Karhunen-Loève展開）
+# X(t) = μ(t) + Σ_k ξ_k φ_k(t)
+X_reconstructed = mfpca.inverse_transform(scores, n_components=3)
+
+# 説明分散比
+variance_ratio = mfpca.explained_variance_ratio()
+```
+
+**理論的性質の検証:**
+
+```python
+# 固有関数の直交正規性を確認
+# <φ_i, φ_j> = δ_ij
+n_comp = eigenfunctions.shape[0]
+for i in range(n_comp):
+    for j in range(n_comp):
+        integrand = np.sum(eigenfunctions[i] * eigenfunctions[j], axis=1)
+        inner_product = np.trapz(integrand, time_grid)
+        print(f"<φ_{i+1}, φ_{j+1}> = {inner_product:.6f}")
+
+# スコアの無相関性を確認
+# Corr(ξ_i, ξ_j) ≈ 0 for i ≠ j
+score_correlation = np.corrcoef(scores.T)
+print(f"Score correlation matrix:\n{score_correlation}")
 ```
 
 ### 2. データ前処理
@@ -307,22 +373,67 @@ clf.fit(features, labels)
 5. **カルフーネン・レーベ展開**:
    $$X_i(t) = \mu(t) + \sum_{k=1}^K \xi_{ik} \psi_k(t)$$
 
-### 実装の特徴
+### 2つの実装アプローチ
+
+#### アプローチ1: 高速実装 (MFPCA)
+
+**離散化による直接的な共分散行列計算**
+
+```
+1. データを離散的な行列として扱う
+2. 共分散行列を直接計算: Σ = (1/n) X^T X
+3. 固有値分解: Σ = V Λ V^T
+4. 数値積分によるスコア計算
+```
+
+**特徴:**
+- 高速: O(n·T²·p²) の計算量
+- NumPy/SciPyの最適化ルーチンを最大限活用
+- 大規模データに適している
+
+#### アプローチ2: 理論的厳密実装 (TheoreticalMFPCA)
+
+**基底展開法による関数空間での解析**
+（Ramsay & Silverman 2005, Happ & Greven 2018）
+
+```
+1. 基底展開: X_i(t) ≈ Σ_j c_{ij} B_j(t)
+   - B-spline基底: 局所的サポート、柔軟性
+   - Fourier基底: 周期性データ、直交性
+
+2. 係数行列の計算（ペナル化最小二乗法）:
+   min_c ||X - BC||² + λ c^T P c
+   解: c = (B^T B + λP)^{-1} B^T X
+   P: 粗さペナルティ行列（∫ [D^m B_i][D^m B_j] dt）
+
+3. 基底空間での共分散行列:
+   Σ = (1/n) C^T W C
+   W: グラム行列（∫ B(t) B(t)^T dt のブロック対角）
+
+4. 固有値分解: Σ V = V Λ
+
+5. 固有関数の再構成: φ_k(t) = Σ_j v_{kj} B_j(t)
+
+6. L2正規化: ||φ_k||² = v_k^T W v_k = 1
+```
+
+**特徴:**
+- 理論的に厳密: 関数データ解析の標準理論に準拠
+- スムージング: ペナルティによる制御可能
+- 柔軟性: 任意の時間グリッドで固有関数を評価可能
+- 検証可能: 直交性、分散分解などの理論的性質
+
+### 実装の共通特徴
 
 1. **数値安定性**:
    - 対称行列に対する固有値分解に `scipy.linalg.eigh` を使用
    - 正則化により ill-conditioned な行列を処理
    - 負の固有値（数値誤差）をフィルタリング
 
-2. **高速化**:
-   - `np.einsum` による効率的な共分散計算
-   - ベクトル化された演算
-   - 最適化された数値積分
-
-3. **スムージング**:
-   - B-spline による適応的スムージング
-   - Savitzky-Golay フィルタのサポート
-   - 自動パラメータ選択
+2. **スムージング**:
+   - MFPCA: B-spline 事前スムージング
+   - TheoreticalMFPCA: ペナル化基底展開
+   - 自動パラメータ選択のサポート
 
 ## テスト
 
