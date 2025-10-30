@@ -17,6 +17,8 @@ from .preprocessing import FunctionalDataPreprocessor, BSplineSmoother
 from .utils import create_time_grid, compute_covariance_surface
 from .visualization import MFPCAVisualizer
 from .basis import BasisSystem, BSplineBasis, FourierBasis, create_basis
+from .som import SOM
+from .som_visualization import SOMVisualizer
 
 __version__ = "1.1.0"
 __author__ = "Data Science Professional"
@@ -33,4 +35,6 @@ __all__ = [
     "create_basis",
     "create_time_grid",
     "compute_covariance_surface",
+    "SOM",
+    "SOMVisualizer",
 ]
