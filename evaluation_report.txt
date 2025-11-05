@@ -6,18 +6,18 @@ SUMMARY TABLE
 --------------------------------------------------------------------------------
 Pattern      Impl         Time(s)    Orthog     ScoreCorr    VarExp     RMSE(3)   
 --------------------------------------------------------------------------------
-smooth       fast         0.022      0.062935   0.052731     0.8835     0.476714  
-smooth       theoretical  0.010      0.143305   0.000000     1.0000     11.454166 
-periodic     fast         0.030      0.028172   0.033275     0.8581     0.313580  
-periodic     theoretical  0.009      1.087576   0.000000     1.0000     3.974014  
+smooth       fast         0.023      0.062935   0.052731     0.8835     0.476714  
+smooth       theoretical  0.017      0.143305   0.164777     1.0000     0.396382  
+periodic     fast         0.027      0.028172   0.033275     0.8581     0.313580  
+periodic     theoretical  0.015      1.087576   0.953498     1.0000     0.205021  
 trend        fast         0.015      0.062002   0.411593     0.9974     0.264059  
-trend        theoretical  0.009      0.439521   0.000000     1.0000     12.679830 
-noisy        fast         0.047      0.026283   0.020141     0.6305     0.628672  
-noisy        theoretical  0.010      0.402776   0.000000     1.0000     14.292383 
+trend        theoretical  0.015      0.439521   0.823537     1.0000     0.278303  
+noisy        fast         0.048      0.026283   0.020141     0.6305     0.628672  
+noisy        theoretical  0.015      0.390873   0.345590     1.0000     0.636407  
 sparse       fast         0.021      0.001034   0.000962     0.8347     0.510656  
-sparse       theoretical  0.009      0.244117   0.000000     1.0000     7.573313  
+sparse       theoretical  0.015      0.244117   0.193262     1.0000     0.497596  
 mixed        fast         0.020      0.095083   0.076743     0.8506     0.517652  
-mixed        theoretical  0.010      0.863647   0.000000     1.0000     11.853514 
+mixed        theoretical  0.015      0.863647   0.574279     1.0000     0.556363  
 
 
 DETAILED ANALYSIS BY PATTERN
@@ -27,7 +27,7 @@ Pattern: SMOOTH
 ----------------------------------------
 
 FAST:
-  Fit time: 0.022s
+  Fit time: 0.023s
   Orthonormality: 0.062935
   Score correlation: 0.052731
   Variance explained: [0.26112267 0.46664461 0.64295585]
@@ -39,22 +39,22 @@ FAST:
     5_components: 0.360809
 
 THEORETICAL:
-  Fit time: 0.010s
+  Fit time: 0.017s
   Orthonormality: 0.143305
-  Score correlation: 0.000000
+  Score correlation: 0.164777
   Variance explained: [0.29966954 0.53852717 0.74805629]
-  Top 3 eigenvalues: [6.0561418  4.82716965 4.23445804]
+  Top 3 eigenvalues: [6.05614176 4.82716963 4.23445803]
   Reconstruction errors:
-    1_components: 7.709580
-    2_components: 9.876749
-    3_components: 11.454166
-    5_components: 13.671886
+    1_components: 0.635289
+    2_components: 0.521645
+    3_components: 0.396382
+    5_components: 0.210488
 
 Pattern: PERIODIC
 ----------------------------------------
 
 FAST:
-  Fit time: 0.030s
+  Fit time: 0.027s
   Orthonormality: 0.028172
   Score correlation: 0.033275
   Variance explained: [0.32219383 0.57932979 0.69709436]
@@ -66,16 +66,16 @@ FAST:
     5_components: 0.313707
 
 THEORETICAL:
-  Fit time: 0.009s
+  Fit time: 0.015s
   Orthonormality: 1.087576
-  Score correlation: 0.000000
+  Score correlation: 0.953498
   Variance explained: [0.29937079 0.5523296  0.75822901]
   Top 3 eigenvalues: [0.45247116 0.38232376 0.31119784]
   Reconstruction errors:
-    1_components: 1.980345
-    2_components: 2.732292
-    3_components: 3.974014
-    5_components: 5.385782
+    1_components: 0.233127
+    2_components: 0.211700
+    3_components: 0.205021
+    5_components: 0.215174
 
 Pattern: TREND
 ----------------------------------------
@@ -93,22 +93,22 @@ FAST:
     5_components: 0.198904
 
 THEORETICAL:
-  Fit time: 0.009s
+  Fit time: 0.015s
   Orthonormality: 0.439521
-  Score correlation: 0.000000
+  Score correlation: 0.823537
   Variance explained: [0.48891816 0.88709393 0.94662532]
-  Top 3 eigenvalues: [11.38580391  9.27261805  1.38635193]
+  Top 3 eigenvalues: [11.38580385  9.272618    1.38635192]
   Reconstruction errors:
-    1_components: 8.986828
-    2_components: 12.177840
-    3_components: 12.679830
-    5_components: 13.687454
+    1_components: 0.624688
+    2_components: 0.324486
+    3_components: 0.278303
+    5_components: 0.266742
 
 Pattern: NOISY
 ----------------------------------------
 
 FAST:
-  Fit time: 0.047s
+  Fit time: 0.048s
   Orthonormality: 0.026283
   Score correlation: 0.020141
   Variance explained: [0.17854884 0.30877629 0.43633303]
@@ -120,16 +120,16 @@ FAST:
     5_components: 0.548948
 
 THEORETICAL:
-  Fit time: 0.010s
-  Orthonormality: 0.402776
-  Score correlation: 0.000000
-  Variance explained: [0.26563132 0.48299582 0.67771798]
-  Top 3 eigenvalues: [5.14449975 4.20971297 3.77119721]
+  Fit time: 0.015s
+  Orthonormality: 0.390873
+  Score correlation: 0.345590
+  Variance explained: [0.27060637 0.48478043 0.68043411]
+  Top 3 eigenvalues: [4.88841405 3.86898327 3.53441865]
   Reconstruction errors:
-    1_components: 8.818912
-    2_components: 12.146826
-    3_components: 14.292383
-    5_components: 17.309073
+    1_components: 0.724085
+    2_components: 0.681619
+    3_components: 0.636407
+    5_components: 0.562381
 
 Pattern: SPARSE
 ----------------------------------------
@@ -147,16 +147,16 @@ FAST:
     5_components: 0.415429
 
 THEORETICAL:
-  Fit time: 0.009s
+  Fit time: 0.015s
   Orthonormality: 0.244117
-  Score correlation: 0.000000
+  Score correlation: 0.193262
   Variance explained: [0.29467205 0.53405093 0.73392893]
-  Top 3 eigenvalues: [3.53790024 2.87403786 2.3997811 ]
+  Top 3 eigenvalues: [3.53790023 2.87403785 2.3997811 ]
   Reconstruction errors:
-    1_components: 4.670555
-    2_components: 6.453580
-    3_components: 7.573313
-    5_components: 9.229241
+    1_components: 0.643679
+    2_components: 0.570596
+    3_components: 0.497596
+    5_components: 0.406638
 
 Pattern: MIXED
 ----------------------------------------
@@ -174,16 +174,16 @@ FAST:
     5_components: 0.430887
 
 THEORETICAL:
-  Fit time: 0.010s
+  Fit time: 0.015s
   Orthonormality: 0.863647
-  Score correlation: 0.000000
+  Score correlation: 0.574279
   Variance explained: [0.44924583 0.60741118 0.76403277]
-  Top 3 eigenvalues: [9.39782278 3.30867816 3.27638436]
+  Top 3 eigenvalues: [9.39782273 3.30867814 3.27638434]
   Reconstruction errors:
-    1_components: 8.367899
-    2_components: 10.460758
-    3_components: 11.853514
-    5_components: 13.947556
+    1_components: 0.643299
+    2_components: 0.596765
+    3_components: 0.556363
+    5_components: 0.516238
 
 ================================================================================
 EVALUATION COMPLETE

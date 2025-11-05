@@ -261,9 +261,10 @@ class MFPCAEvaluator:
             else:  # theoretical
                 mfpca = TheoreticalMFPCA(
                     n_components=n_components,
-                    n_basis=kwargs.get('n_basis', 15),
+                    n_basis=kwargs.get('n_basis', 'auto'),  # Changed from 15 to 'auto'
                     basis_type=kwargs.get('basis_type', 'bspline'),
                     smoothing=kwargs.get('smoothing', True),
+                    smoothing_penalty=kwargs.get('smoothing_penalty', None),  # Auto-select
                     center=True
                 )
 

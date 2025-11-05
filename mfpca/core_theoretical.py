@@ -52,8 +52,10 @@ class TheoreticalMFPCA:
     ----------
     n_components : int, optional
         Number of principal components (default: None, all)
-    n_basis : int
-        Number of basis functions per variable (default: 20)
+    n_basis : int or 'auto'
+        Number of basis functions per variable (default: 'auto')
+        If 'auto', automatically selects based on n_timepoints (recommended)
+        Rule of thumb: n_basis ≈ 0.4 * n_timepoints (capped at 50)
     basis_type : str
         Type of basis: 'bspline' or 'fourier' (default: 'bspline')
     basis_degree : int
@@ -62,12 +64,13 @@ class TheoreticalMFPCA:
         Whether to use smoothing penalty (default: True)
     smoothing_penalty : float, optional
         Smoothing parameter λ in penalized estimation (default: None, auto)
+        If None, automatically selects based on estimated noise level
     penalty_order : int
         Order of derivative in penalty (default: 2)
     center : bool
         Whether to center data (default: True)
     regularization : float
-        Regularization for numerical stability (default: 1e-10)
+        Regularization for numerical stability (default: 1e-8)
 
     Attributes
     ----------
@@ -88,14 +91,14 @@ class TheoreticalMFPCA:
     def __init__(
         self,
         n_components: Optional[int] = None,
-        n_basis: int = 20,
+        n_basis: Union[int, str] = 'auto',
         basis_type: str = 'bspline',
         basis_degree: int = 3,
         smoothing: bool = True,
         smoothing_penalty: Optional[float] = None,
         penalty_order: int = 2,
         center: bool = True,
-        regularization: float = 1e-10
+        regularization: float = 1e-8
     ):
         self.n_components = n_components
         self.n_basis = n_basis
@@ -157,11 +160,40 @@ class TheoreticalMFPCA:
                     f"X.shape[1] ({n_timepoints})"
                 )
 
+        # Auto-select n_basis if needed
+        if self.n_basis == 'auto' or self.n_basis is None:
+            n_basis = self._auto_select_n_basis(n_timepoints)
+            if self.n_basis == 'auto':
+                print(f"Auto-selected n_basis={n_basis} for n_timepoints={n_timepoints}")
+        else:
+            n_basis = int(self.n_basis)
+            # Validate user-provided n_basis
+            if n_basis < self.basis_degree + 1:
+                warnings.warn(
+                    f"n_basis={n_basis} is too small for degree={self.basis_degree}. "
+                    f"Minimum is {self.basis_degree + 1}. Auto-selecting instead."
+                )
+                n_basis = self._auto_select_n_basis(n_timepoints)
+            elif n_basis < n_timepoints // 4:
+                warnings.warn(
+                    f"n_basis={n_basis} may be too small for n_timepoints={n_timepoints}. "
+                    f"Consider using at least {n_timepoints // 4} basis functions for better accuracy."
+                )
+            elif n_basis > n_timepoints:
+                warnings.warn(
+                    f"n_basis={n_basis} exceeds n_timepoints={n_timepoints}. "
+                    f"This may cause overfitting. Reducing to n_timepoints."
+                )
+                n_basis = n_timepoints
+
+        # Store the selected n_basis
+        self.n_basis_used_ = n_basis
+
         # Create basis system
         domain = (self.time_grid_[0], self.time_grid_[-1])
         self.basis_ = create_basis(
             self.basis_type,
-            self.n_basis,
+            n_basis,
             domain=domain,
             degree=self.basis_degree
         )
@@ -179,7 +211,7 @@ class TheoreticalMFPCA:
                 order=self.penalty_order
             )
         else:
-            self.penalty_matrix_ = np.zeros((self.n_basis, self.n_basis))
+            self.penalty_matrix_ = np.zeros((self.basis_.n_basis, self.basis_.n_basis))
 
         # Step 1: Compute basis expansion coefficients for each variable
         # X_ij(t) ≈ Σ_k c_{ijk} B_k(t) for variable j
@@ -190,7 +222,7 @@ class TheoreticalMFPCA:
             self.mean_coefficients_ = np.mean(self.coefficients_, axis=0)
             C_centered = self.coefficients_ - self.mean_coefficients_
         else:
-            self.mean_coefficients_ = np.zeros(self.n_basis * n_variables)
+            self.mean_coefficients_ = np.zeros(self.basis_.n_basis * n_variables)
             C_centered = self.coefficients_
 
         # Step 3: Compute covariance matrix in basis space
@@ -213,13 +245,13 @@ class TheoreticalMFPCA:
         self.eigenvalues_ = eigenvalues[:n_comp]
         self.eigenvector_coefficients_ = eigenvectors[:, :n_comp]
 
-        # Step 6: Compute scores via projection in basis space
-        # ξ_{ik} = c_i^T v_k (in coefficient space)
-        # Note: L2 inner product will be properly accounted for in eigenfunction evaluation
-        self.scores_ = C_centered @ self.eigenvector_coefficients_
-
-        # Normalize eigenfunctions to have unit L2 norm
+        # Step 6: Normalize eigenfunctions FIRST to have unit L2 norm
         self._normalize_eigenfunctions()
+
+        # Step 7: Compute scores via L2 projection
+        # ξ_{ik} = ∫ [X_i(t) - μ(t)]^T φ_k(t) dt
+        # This must be done AFTER normalization for correct projections
+        self.scores_ = self._compute_scores_l2(X)
 
         return self
 
@@ -243,18 +275,8 @@ class TheoreticalMFPCA:
 
         X = self._validate_input(X)
 
-        # Compute basis coefficients
-        B = self.basis_.evaluate(self.time_grid_)
-        C = self._compute_basis_coefficients(X, B)
-
-        # Center
-        if self.center:
-            C_centered = C - self.mean_coefficients_
-        else:
-            C_centered = C
-
-        # Project onto eigenfunctions in coefficient space
-        scores = C_centered @ self.eigenvector_coefficients_
+        # Compute scores via L2 projection (same as in fit)
+        scores = self._compute_scores_l2(X)
 
         return scores
 
@@ -316,7 +338,7 @@ class TheoreticalMFPCA:
         for i in range(n_samples):
             for j in range(self.n_variables_):
                 # Coefficients for variable j
-                c_ij = C_recon[i, j * self.n_basis:(j + 1) * self.n_basis]
+                c_ij = C_recon[i, j * self.basis_.n_basis:(j + 1) * self.basis_.n_basis]
                 # Reconstruct: X_ij(t) = Σ_k c_ijk B_k(t)
                 X_reconstructed[i, :, j] = B @ c_ij
 
@@ -356,7 +378,7 @@ class TheoreticalMFPCA:
             for j in range(self.n_variables_):
                 # Coefficients for k-th eigenfunction, j-th variable
                 v_kj = self.eigenvector_coefficients_[
-                    j * self.n_basis:(j + 1) * self.n_basis, k
+                    j * self.basis_.n_basis:(j + 1) * self.basis_.n_basis, k
                 ]
                 # Evaluate: φ_k^(j)(t) = Σ_m v_{kjm} B_m(t)
                 eigenfunctions[k, :, j] = B @ v_kj
@@ -387,7 +409,7 @@ class TheoreticalMFPCA:
         mean_function = np.zeros((n_timepoints, self.n_variables_))
 
         for j in range(self.n_variables_):
-            c_j = self.mean_coefficients_[j * self.n_basis:(j + 1) * self.n_basis]
+            c_j = self.mean_coefficients_[j * self.basis_.n_basis:(j + 1) * self.basis_.n_basis]
             mean_function[:, j] = B @ c_j
 
         return mean_function
@@ -452,12 +474,29 @@ class TheoreticalMFPCA:
 
         # Auto-select smoothing parameter if not provided
         if self.smoothing and self.smoothing_penalty is None:
-            # Heuristic: λ = 0.01 * trace(B^T B) / trace(P)
+            # Improved heuristic based on noise level estimation
+            sigma_noise = self._estimate_noise_level(X)
+
+            # Base ratio of penalty matrices
             trace_BTB = np.trace(B.T @ B)
             trace_P = np.trace(self.penalty_matrix_) + 1e-10
-            lambda_smooth = 0.01 * trace_BTB / trace_P
+
+            # Adjust based on noise level
+            # Low noise (< 0.1): light smoothing
+            # Medium noise (0.1-0.5): moderate smoothing
+            # High noise (> 0.5): strong smoothing
+            if sigma_noise < 0.1:
+                lambda_smooth = 0.001 * trace_BTB / trace_P
+            elif sigma_noise < 0.5:
+                lambda_smooth = 0.01 * trace_BTB / trace_P
+            else:
+                lambda_smooth = 0.05 * trace_BTB / trace_P
+
+            # Store for reference
+            self.smoothing_penalty_used_ = lambda_smooth
         else:
             lambda_smooth = self.smoothing_penalty if self.smoothing else 0.0
+            self.smoothing_penalty_used_ = lambda_smooth
 
         # Solve for each variable separately
         # (B^T B + λ P) c = B^T x
@@ -468,9 +507,9 @@ class TheoreticalMFPCA:
             A = BTB
 
         # Add regularization for stability
-        A += self.regularization * np.eye(self.n_basis)
+        A += self.regularization * np.eye(self.basis_.n_basis)
 
-        C = np.zeros((n_samples, n_variables * self.n_basis))
+        C = np.zeros((n_samples, n_variables * self.basis_.n_basis))
 
         for i in range(n_samples):
             for j in range(n_variables):
@@ -484,7 +523,7 @@ class TheoreticalMFPCA:
                     # Fallback to least squares
                     c_ij = linalg.lstsq(A, b_ij)[0]
 
-                C[i, j * self.n_basis:(j + 1) * self.n_basis] = c_ij
+                C[i, j * self.basis_.n_basis:(j + 1) * self.basis_.n_basis] = c_ij
 
         return C
 
@@ -545,24 +584,136 @@ class TheoreticalMFPCA:
 
     def _normalize_eigenfunctions(self):
         """
-        Normalize eigenfunctions to unit L2 norm.
+        Normalize eigenfunctions to unit L2 norm via numerical integration.
 
         固有関数のL2ノルムを1に正規化
 
-        ||φ_k||^2 = ∫ φ_k(t)^T φ_k(t) dt = v_k^T W v_k = 1
+        ||φ_k||^2 = ∫ φ_k(t)^T φ_k(t) dt
+
+        Uses numerical integration on the actual eigenfunction evaluations
+        rather than Gram matrix to ensure consistency with reconstruction.
         """
-        W = self._construct_weight_matrix()
+        # Evaluate eigenfunctions on time grid
+        eigenfuncs = self.get_eigenfunctions(self.time_grid_)
+
+        # Integration weights (trapezoidal rule)
+        dt = (self.time_grid_[-1] - self.time_grid_[0]) / (len(self.time_grid_) - 1)
+        weights = np.ones(len(self.time_grid_))
+        weights[0] = weights[-1] = 0.5
+        weights *= dt
 
         for k in range(self.eigenvector_coefficients_.shape[1]):
-            v_k = self.eigenvector_coefficients_[:, k]
-
-            # Compute L2 norm: ||φ_k||^2 = v_k^T W v_k
-            norm_squared = v_k.T @ W @ v_k
+            # Compute L2 norm: ||φ_k||^2 = ∫ ||φ_k(t)||^2 dt
+            # where ||φ_k(t)||^2 = sum over variables of φ_k^(j)(t)^2
+            integrand = np.sum(eigenfuncs[k]**2, axis=1)  # Sum over variables
+            norm_squared = np.sum(integrand * weights)
 
             if norm_squared > 1e-10:
                 norm = np.sqrt(norm_squared)
+                # Normalize eigenfunction coefficients
                 self.eigenvector_coefficients_[:, k] /= norm
-                self.scores_[:, k] *= norm  # Adjust scores accordingly
+                # Note: Scores will be computed separately via L2 projection after this
+
+    def _compute_scores_l2(self, X: np.ndarray) -> np.ndarray:
+        """
+        Compute scores via L2 projection.
+
+        L2射影によるスコアの計算
+
+        ξ_{ik} = ∫ [X_i(t) - μ(t)]^T φ_k(t) dt
+
+        Parameters
+        ----------
+        X : ndarray of shape (n_samples, n_timepoints, n_variables)
+            Original data
+
+        Returns
+        -------
+        scores : ndarray of shape (n_samples, n_components)
+            PC scores via L2 projection
+        """
+        n_samples = X.shape[0]
+        n_components = self.eigenvector_coefficients_.shape[1]
+
+        # Get mean function and eigenfunctions
+        mean_func = self.get_mean_function(self.time_grid_)
+        eigenfuncs = self.get_eigenfunctions(self.time_grid_)
+
+        # Integration weights (trapezoidal rule)
+        dt = (self.time_grid_[-1] - self.time_grid_[0]) / (len(self.time_grid_) - 1)
+        weights = np.ones(len(self.time_grid_))
+        weights[0] = weights[-1] = 0.5
+        weights *= dt
+
+        # Compute scores
+        scores = np.zeros((n_samples, n_components))
+
+        for i in range(n_samples):
+            for k in range(n_components):
+                # ξ_{ik} = ∫ [X_i(t) - μ(t)]^T φ_k(t) dt
+                # = sum over t and j: [X_i(t,j) - μ(t,j)] * φ_k(t,j) * weight(t)
+                X_centered = X[i] - mean_func  # (n_timepoints, n_variables)
+                integrand = np.sum(X_centered * eigenfuncs[k], axis=1)  # Sum over variables
+                scores[i, k] = np.sum(integrand * weights)
+
+        return scores
+
+    def _auto_select_n_basis(self, n_timepoints: int) -> int:
+        """
+        Auto-select number of basis functions based on n_timepoints.
+
+        自動的に基底関数の数を選択
+
+        Rule of thumb from FDA literature:
+        - n_basis should be roughly n_timepoints/2 to n_timepoints/3
+        - But not too small (min 10-15) or too large (max 50)
+
+        Parameters
+        ----------
+        n_timepoints : int
+            Number of time points in data
+
+        Returns
+        -------
+        n_basis : int
+            Recommended number of basis functions
+        """
+        if n_timepoints < 20:
+            # For very short series, use half the timepoints
+            n_basis = max(self.basis_degree + 1, n_timepoints // 2)
+        elif n_timepoints < 50:
+            # For medium series, use 40-50% of timepoints
+            n_basis = max(15, int(n_timepoints * 0.45))
+        else:
+            # For long series, use 30-40% but cap at reasonable maximum
+            n_basis = max(20, min(int(n_timepoints * 0.4), 50))
+
+        # Ensure minimum for basis degree
+        n_basis = max(n_basis, self.basis_degree + 2)
+
+        return n_basis
+
+    def _estimate_noise_level(self, X: np.ndarray) -> float:
+        """
+        Estimate noise level in data for smoothing parameter selection.
+
+        データのノイズレベルを推定
+
+        Uses median absolute deviation of second differences.
+
+        Returns
+        -------
+        sigma_noise : float
+            Estimated noise standard deviation
+        """
+        # Compute second differences along time axis
+        d2 = np.diff(X, n=2, axis=1)
+
+        # Robust estimate: MAD / 0.6745
+        mad = np.median(np.abs(d2))
+        sigma_noise = mad / 0.6745
+
+        return sigma_noise
 
     def _check_fitted(self):
         """Check if model is fitted."""
