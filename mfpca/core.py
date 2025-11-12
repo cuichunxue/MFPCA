@@ -144,15 +144,21 @@ class MFPCA:
         self.eigenvalues_ = eigenvalues[:n_comp]
         self.eigenfunctions_ = eigenfunctions[:n_comp]
 
+        # Compute scores (projection onto eigenfunctions)
+        self.scores_ = self._compute_scores(X_centered)
+
+        # CRITICAL: Recompute eigenvalues as score variances
+        # This ensures eigenvalues match the functional PCA definition: λ_k = Var(ξ_k)
+        # The eigenvalues from discrete eigen-decomposition may not match exactly
+        # due to numerical integration and normalization effects
+        self.eigenvalues_ = np.var(self.scores_, axis=0, ddof=0)
+
         # Compute variance explained
-        total_variance = np.sum(eigenvalues)
+        total_variance = np.sum(self.eigenvalues_)
         if total_variance > 0:
             self.variance_explained_ratio_ = self.eigenvalues_ / total_variance
         else:
             self.variance_explained_ratio_ = np.zeros_like(self.eigenvalues_)
-
-        # Compute scores (projection onto eigenfunctions)
-        self.scores_ = self._compute_scores(X_centered)
 
         return self
 
@@ -374,6 +380,7 @@ class MFPCA:
         )
 
         # Normalize eigenfunctions
+        # Note: eigenvalues will be recomputed from score variances after projection
         for i in range(n_components):
             norm = np.sqrt(np.trapz(
                 np.sum(eigenfunctions[i]**2, axis=1),

@@ -226,14 +226,15 @@ class TheoreticalMFPCA:
             C_centered = self.coefficients_
 
         # Step 3: Compute covariance matrix in basis space
-        # Σ = (1/n) C^T C (standard covariance)
-        # W (Gram matrix) will be used later for L2 inner products
+        # Standard approach: Σ = C^T C / n
         Sigma = (C_centered.T @ C_centered) / n_samples
 
         # Add regularization for numerical stability
         Sigma += self.regularization * np.eye(Sigma.shape[0])
 
-        # Step 4: Eigendecomposition
+        # Step 4: Standard eigenvalue decomposition
+        # The eigenvalues from this are in coefficient space
+        # They will be rescaled to function space during normalization
         eigenvalues, eigenvectors = self._eigen_decomposition(Sigma)
 
         # Step 5: Select components
@@ -245,13 +246,17 @@ class TheoreticalMFPCA:
         self.eigenvalues_ = eigenvalues[:n_comp]
         self.eigenvector_coefficients_ = eigenvectors[:, :n_comp]
 
-        # Step 6: Normalize eigenfunctions FIRST to have unit L2 norm
+        # Step 6: Compute scores in coefficient space FIRST
+        # ξ_{ik} = c_i^T v_k where c_i are centered coefficients
+        self.scores_ = C_centered @ self.eigenvector_coefficients_
+
+        # Step 7: Normalize eigenfunctions and adjust scores simultaneously
+        # This maintains reconstruction: X = μ + Σ ξ φ
         self._normalize_eigenfunctions()
 
-        # Step 7: Compute scores via L2 projection
-        # ξ_{ik} = ∫ [X_i(t) - μ(t)]^T φ_k(t) dt
-        # This must be done AFTER normalization for correct projections
-        self.scores_ = self._compute_scores_l2(X)
+        # Step 8: Compute final eigenvalues from score variances
+        # After normalization, this gives the correct functional eigenvalues
+        self.eigenvalues_ = np.var(self.scores_, axis=0, ddof=0)
 
         return self
 
@@ -275,8 +280,19 @@ class TheoreticalMFPCA:
 
         X = self._validate_input(X)
 
-        # Compute scores via L2 projection (same as in fit)
-        scores = self._compute_scores_l2(X)
+        # Compute basis coefficients
+        B = self.basis_.evaluate(self.time_grid_)
+        C = self._compute_basis_coefficients(X, B)
+
+        # Center
+        if self.center:
+            C_centered = C - self.mean_coefficients_
+        else:
+            C_centered = C
+
+        # Compute scores in coefficient space
+        # This is consistent with how eigenvalues were computed
+        scores = C_centered @ self.eigenvector_coefficients_
 
         return scores
 
@@ -540,9 +556,99 @@ class TheoreticalMFPCA:
         W = np.kron(np.eye(self.n_variables_), self.gram_matrix_)
         return W
 
+    def _generalized_eigen_decomposition(
+        self,
+        Sigma: np.ndarray,
+        W: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Solve generalized eigenvalue problem: Σ v = λ W v
+
+        一般化固有値問題を解く
+
+        Uses Cholesky decomposition for numerical stability:
+        1. W = L L^T (Cholesky)
+        2. Transform: L^{-T} Σ L^{-1} v' = λ v'
+        3. Back-transform: v = L^{-1} v'
+
+        Parameters
+        ----------
+        Sigma : ndarray
+            Covariance matrix
+        W : ndarray
+            Gram matrix (metric)
+
+        Returns
+        -------
+        eigenvalues : ndarray
+            Sorted eigenvalues (descending)
+        eigenvectors : ndarray
+            Corresponding eigenvectors satisfying W-orthonormality
+        """
+        # Ensure symmetry
+        Sigma_sym = (Sigma + Sigma.T) / 2
+        W_sym = (W + W.T) / 2
+
+        try:
+            # Method 1: Use scipy's generalized eigenvalue solver
+            eigenvalues, eigenvectors = linalg.eigh(Sigma_sym, W_sym)
+
+            # Sort in descending order
+            idx = np.argsort(eigenvalues)[::-1]
+            eigenvalues = eigenvalues[idx]
+            eigenvectors = eigenvectors[:, idx]
+
+            # Filter negative eigenvalues
+            positive_mask = eigenvalues > max(1e-10, self.regularization)
+            eigenvalues = eigenvalues[positive_mask]
+            eigenvectors = eigenvectors[:, positive_mask]
+
+        except linalg.LinAlgError as e:
+            # Fallback: Manual Cholesky-based solution
+            warnings.warn(f"Direct generalized eigh failed: {e}. Using Cholesky method.")
+
+            try:
+                # Cholesky decomposition: W = L L^T
+                L = linalg.cholesky(W_sym, lower=True)
+                L_inv = linalg.solve_triangular(L, np.eye(L.shape[0]), lower=True)
+
+                # Transform to standard eigenvalue problem
+                # Σ_transformed = L_inv^T @ Sigma @ L_inv
+                Sigma_transformed = L_inv.T @ Sigma_sym @ L_inv
+
+                # Solve standard eigenvalue problem
+                eigenvalues, eigenvectors_transformed = linalg.eigh(Sigma_transformed)
+
+                # Sort in descending order
+                idx = np.argsort(eigenvalues)[::-1]
+                eigenvalues = eigenvalues[idx]
+                eigenvectors_transformed = eigenvectors_transformed[:, idx]
+
+                # Back-transform: v = L_inv @ v'
+                eigenvectors = L_inv @ eigenvectors_transformed
+
+                # Filter negative eigenvalues
+                positive_mask = eigenvalues > max(1e-10, self.regularization)
+                eigenvalues = eigenvalues[positive_mask]
+                eigenvectors = eigenvectors[:, positive_mask]
+
+            except linalg.LinAlgError as e2:
+                warnings.warn(f"Cholesky method also failed: {e2}. Using SVD.")
+                # Last resort: SVD
+                U, s, Vt = linalg.svd(Sigma_sym, full_matrices=False)
+                eigenvalues = s
+                eigenvectors = U
+
+                positive_mask = eigenvalues > max(1e-10, self.regularization)
+                eigenvalues = eigenvalues[positive_mask]
+                eigenvectors = eigenvectors[:, positive_mask]
+
+        return eigenvalues, eigenvectors
+
     def _eigen_decomposition(self, Sigma: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
         Perform eigendecomposition with numerical stability.
+        (Legacy method - kept for compatibility)
 
         固有値分解（数値安定性を考慮）
 
@@ -584,14 +690,15 @@ class TheoreticalMFPCA:
 
     def _normalize_eigenfunctions(self):
         """
-        Normalize eigenfunctions to unit L2 norm via numerical integration.
+        Normalize eigenfunctions to unit L2 norm and adjust scores accordingly.
 
-        固有関数のL2ノルムを1に正規化
+        固有関数のL2ノルムを1に正規化し、スコアも調整
 
-        ||φ_k||^2 = ∫ φ_k(t)^T φ_k(t) dt
+        ||φ_k||^2 = ∫ φ_k(t)^T φ_k(t) dt = 1
 
-        Uses numerical integration on the actual eigenfunction evaluations
-        rather than Gram matrix to ensure consistency with reconstruction.
+        When we divide eigenvector by norm:
+        - φ_new = φ_old / norm
+        - ξ_new = ξ_old * norm (to maintain X = Σ ξφ)
         """
         # Evaluate eigenfunctions on time grid
         eigenfuncs = self.get_eigenfunctions(self.time_grid_)
@@ -604,7 +711,6 @@ class TheoreticalMFPCA:
 
         for k in range(self.eigenvector_coefficients_.shape[1]):
             # Compute L2 norm: ||φ_k||^2 = ∫ ||φ_k(t)||^2 dt
-            # where ||φ_k(t)||^2 = sum over variables of φ_k^(j)(t)^2
             integrand = np.sum(eigenfuncs[k]**2, axis=1)  # Sum over variables
             norm_squared = np.sum(integrand * weights)
 
@@ -612,7 +718,8 @@ class TheoreticalMFPCA:
                 norm = np.sqrt(norm_squared)
                 # Normalize eigenfunction coefficients
                 self.eigenvector_coefficients_[:, k] /= norm
-                # Note: Scores will be computed separately via L2 projection after this
+                # Adjust scores to maintain reconstruction invariance
+                self.scores_[:, k] *= norm
 
     def _compute_scores_l2(self, X: np.ndarray) -> np.ndarray:
         """
